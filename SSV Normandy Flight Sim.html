@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<!-- saved from url=(0048)file:///C:/Users/blueb/Documents/Code/index.html -->
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSV Normandy Flight Sim</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        #ui {
+            position: absolute; top: 20px; left: 20px; color: #00f2ff;
+            text-shadow: 0 0 5px #00f2ff; pointer-events: none;
+        }
+        #modelInput { pointer-events: auto; margin-top: 10px; font-size: 12px; display: block; }
+        .label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+        .value { font-size: 20px; font-weight: bold; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="label">Speed</div>
+        <div id="speed" class="value">0</div>
+        <div class="label">Altitude</div>
+        <div id="alt" class="value">824</div>
+        <div class="label">Controls</div>
+        <div class="label">W/S: Pitch | A/D: Roll | Q/E: Yaw | Shift/Ctrl: Thrust</div>
+        <div class="label" style="margin-top: 10px;">Import Aircraft (.glb/.gltf)</div>
+        <input type="file" id="modelInput" accept=".glb,.gltf">
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+        // --- Configuration ---
+        const FLIGHT_SETTINGS = {
+            thrust: 0.5,
+            maxSpeed: 150,
+            rotationSpeed: 0.02,
+            damping: 0.99
+        };
+
+        let scene, camera, renderer, terrain, ship;
+        let velocity = new THREE.Vector3();
+        let speed = 0;
+        const keys = {};
+
+        init();
+        animate();
+
+        function init() {
+            // Scene Setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x050505);
+            scene.fog = new THREE.FogExp2(0x001122, 0.001);
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 10000);
+            
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            // Lights
+            const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+            sun.position.set(100, 200, 100);
+            scene.add(sun);
+            scene.add(new THREE.AmbientLight(0x404040));
+
+            // Terrain Generation
+            const terrainSize = 5000;
+            const geometry = new THREE.PlaneGeometry(terrainSize, terrainSize, 100, 100);
+            const vertices = geometry.attributes.position.array;
+            for (let i = 0; i < vertices.length; i += 3) {
+                // Simple noise-like mountains
+                vertices[i + 2] = Math.sin(vertices[i] / 100) * Math.cos(vertices[i + 1] / 100) * 50 + 
+                                 Math.random() * 10;
+            }
+            geometry.computeVertexNormals();
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0x112233, 
+                wireframe: false,
+                flatShading: true 
+            });
+            terrain = new THREE.Mesh(geometry, material);
+            terrain.rotation.x = -Math.PI / 2;
+            scene.add(terrain);
+
+            // SSV Normandy SR-2 Placeholder Model
+            ship = createNormandyModel();
+            ship.position.y = 100;
+            scene.add(ship);
+
+            // Model Importer Logic
+            const loader = new GLTFLoader();
+            document.getElementById('modelInput').addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const url = URL.createObjectURL(file);
+                loader.load(url, (gltf) => {
+                    ship.clear();
+                    ship.add(gltf.scene);
+                    URL.revokeObjectURL(url);
+                });
+            });
+
+            // Input Listeners
+            window.addEventListener('keydown', e => keys[e.code] = true);
+            window.addEventListener('keyup', e => keys[e.code] = false);
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function createNormandyModel() {
+            const group = new THREE.Group();
+            
+            // Main Hull (Sleek Needle)
+            const hullGeom = new THREE.CylinderGeometry(0.5, 2, 20, 8);
+            hullGeom.rotateX(Math.PI / 2);
+            const hullMat = new THREE.MeshPhongMaterial({ color: 0xcccccc });
+            const hull = new THREE.Mesh(hullGeom, hullMat);
+            group.add(hull);
+
+            // Wings (The iconic 4-wing setup)
+            const wingGeom = new THREE.BoxGeometry(15, 0.2, 5);
+            const wingMat = new THREE.MeshPhongMaterial({ color: 0x333333 });
+            
+            for(let i = 0; i < 4; i++) {
+                const wing = new THREE.Mesh(wingGeom, wingMat);
+                wing.position.z = -2;
+                wing.rotation.z = (Math.PI / 4) + (i * Math.PI / 2);
+                group.add(wing);
+            }
+
+            // Bridge / Cockpit
+            const cockpit = new THREE.Mesh(
+                new THREE.SphereGeometry(1.2, 8, 8),
+                new THREE.MeshPhongMaterial({ color: 0x00f2ff })
+            );
+            cockpit.position.set(0, 0.5, 6);
+            cockpit.scale.set(1, 0.5, 2);
+            group.add(cockpit);
+
+            return group;
+        }
+
+        function handleFlight() {
+            // Rotation Logic
+            if (keys['KeyW']) ship.rotateX(FLIGHT_SETTINGS.rotationSpeed);  // Pitch Down
+            if (keys['KeyS']) ship.rotateX(-FLIGHT_SETTINGS.rotationSpeed); // Pitch Up
+            if (keys['KeyA']) ship.rotateZ(FLIGHT_SETTINGS.rotationSpeed);  // Roll Left
+            if (keys['KeyD']) ship.rotateZ(-FLIGHT_SETTINGS.rotationSpeed); // Roll Right
+            if (keys['KeyQ']) ship.rotateY(FLIGHT_SETTINGS.rotationSpeed);  // Yaw Left
+            if (keys['KeyE']) ship.rotateY(-FLIGHT_SETTINGS.rotationSpeed); // Yaw Right
+
+            // Thrust Logic
+            if (keys['ShiftLeft']) {
+                speed = Math.min(speed + FLIGHT_SETTINGS.thrust, FLIGHT_SETTINGS.maxSpeed);
+            } else if (keys['ControlLeft']) {
+                speed = Math.max(speed - FLIGHT_SETTINGS.thrust, 0);
+            } else {
+                speed *= FLIGHT_SETTINGS.damping; // Natural drag
+            }
+
+            // Apply Movement
+            // Forward direction is positive Z in Three.js local space (depends on model orientation)
+            // Based on our model creation, 'Forward' is positive Z
+            const forward = new THREE.Vector3(0, 0, 1);
+            forward.applyQuaternion(ship.quaternion);
+            
+            velocity.copy(forward).multiplyScalar(speed);
+            ship.position.add(velocity);
+
+            // Camera Follow
+            const relativeCameraOffset = new THREE.Vector3(0, 5, -25);
+            const cameraOffset = relativeCameraOffset.applyQuaternion(ship.quaternion);
+            camera.position.copy(ship.position).add(cameraOffset);
+            camera.lookAt(ship.position);
+
+            // Update UI
+            document.getElementById('speed').innerText = Math.round(speed * 10);
+            document.getElementById('alt').innerText = Math.round(ship.position.y);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            handleFlight();
+            renderer.render(scene, camera);
+        }
+    </script>
+
+<canvas data-engine="three.js r160" width="1872" height="922" style="display: block; width: 1872px; height: 922px;"></canvas></body></html>
